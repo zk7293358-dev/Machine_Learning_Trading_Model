@@ -1,0 +1,159 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras import models, layers
+from tensorflow.keras.optimizers import Adam
+import matplotlib.pyplot as plt
+import mplfinance as mpf
+class StockPricePrediction:
+    def __init__(self,excel_file_path):
+        # Load dataset from Excel
+        self.df1=pd.read_csv(excel_file_path)
+        self.scaler = StandardScaler()  # Scaler initialization
+        self.model = None
+    def prepare_data(self):
+        # Prepare features and labels
+        X = self.df1.drop(columns=['Timestamp', 'Ylabel'])#Drop non-feature columns
+        y = self.df1['Ylabel']  # Target label (1 for buying signal, 0 for no signal)
+        ##########################################################################################
+        print("Input Features (X):")
+        print(X)
+        print("==============================================================================================================\n")
+        ############################################################################################
+        # Scale the features
+        X_scaled = self.scaler.fit_transform(X)
+        # Reshape the data to match the input for Conv1D (samples, timesteps, features)
+        X_reshaped = X_scaled.reshape(X_scaled.shape[0], X_scaled.shape[1], 1)
+        # Split the data into training and testing sets
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+            X_reshaped, y, test_size=0.4, random_state=42
+        )
+    # Updated CNN model function
+    def create_cnn_model(self, input_shape):
+        model = models.Sequential()
+        # Convolutional layers
+        model.add(layers.Conv1D(16, 3, activation='relu', input_shape=input_shape))
+        model.add(layers.MaxPooling1D(2))
+        model.add(layers.Conv1D(32, 3, activation='relu'))
+        model.add(layers.MaxPooling1D(2))
+        # Flatten layer
+        model.add(layers.Flatten())
+        # Dense layers
+        model.add(layers.Dense(500, activation='relu'))
+        model.add(layers.Dense(50, activation='relu'))
+        # Output layer
+        model.add(layers.Dense(1, activation='sigmoid'))
+        # Compile the model
+        model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=['accuracy'])
+        return model
+    def build_model(self):
+        # Use CNN model instead of dense layers
+        input_shape = (self.X_train.shape[1], self.X_train.shape[2])
+        self.model = self.create_cnn_model(input_shape)
+    def train_model(self, epochs=10, batch_size=32):
+        # Train the model
+        history = self.model.fit(self.X_train, self.y_train, epochs=epochs, batch_size=batch_size, validation_split=0.4)
+        # Plot training & validation accuracy values
+        plt.plot(history.history['accuracy'])
+        plt.plot(history.history['val_accuracy'])
+        plt.title('Model accuracy')
+        plt.ylabel('Accuracy')
+        plt.xlabel('Epoch')
+        plt.legend(['Train', 'Validation'], loc='upper left')
+        plt.show()
+        # Plot training & validation loss values
+        plt.plot(history.history['loss'])
+        plt.plot(history.history['val_loss'])
+        plt.title('Model loss')
+        plt.ylabel('Loss')
+        plt.xlabel('Epoch')
+        plt.legend(['Train', 'Validation'], loc='upper left')
+        plt.show()
+
+    def evaluate_model(self):
+        # Evaluate the model on the test set
+        test_loss, test_acc = self.model.evaluate(self.X_test, self.y_test)
+        print(f"Test Accuracy: {test_acc:.4f}")
+    
+    def predict_and_save(self, output_file='df4_with_predictions_continuous.csv'):
+        # Prepare the test input (X) by dropping 'Timestamp' and 'Ylabel'
+        X_test_new = self.df1.drop(columns=['Timestamp', 'Ylabel']).values
+        
+        # Standardize the input data using the same scaler
+        X_test_new_scaled = self.scaler.transform(X_test_new)
+
+        # Reshape for Conv1D input (samples, timesteps, features)
+        X_test_new_reshaped = X_test_new_scaled.reshape(X_test_new_scaled.shape[0], X_test_new_scaled.shape[1], 1)
+
+        # Predict using the trained model
+        Y_Predict_continuous = self.model.predict(X_test_new_reshaped)
+
+        # Convert continuous predictions to binary (threshold = 0.5)
+        Y_Predict_binary = [1 if pred >= 0.5 else 0 for pred in Y_Predict_continuous]
+
+        # Add the continuous and binary predicted Y values to the dataframe
+        self.df1['Y_Predict_Accuracy'] = Y_Predict_continuous
+        self.df1['Y_Predict_Binary'] = Y_Predict_binary
+
+        # Select the relevant columns
+        df3 = self.df1[['Timestamp', 'Ylabel', 'Y_Predict_Accuracy', 'Y_Predict_Binary']]
+
+        # Calculate the percentage similarity between Ylabel and Y_Predict_Binary
+        matches = (self.df1['Ylabel'].values == self.df1['Y_Predict_Binary'].values).sum()
+        total_predictions = self.df1['Y_Predict_Binary'].shape[0]
+        
+        similarity_percentage = (matches / total_predictions) * 100 if total_predictions > 0 else 0
+
+        print(f"Similarity Percentage between Ylabel and Y_Predict_Binary: {similarity_percentage:.2f}%")
+
+        # Save predictions to CSV
+        df3.to_csv(output_file, index=False)
+        print(f"Predictions saved to '{output_file}'")
+
+        # Plotting the actual vs predicted values with mplfinance
+        self.plot_predictions()
+#######################################################################################################
+    def plot_predictions(self):
+        # Plot continuous predictions vs actual values
+        plt.figure(figsize=(10, 6))
+        
+        # # Plot actual values
+        # plt.plot(self.df1['Timestamp'], self.df1['Ylabel'], label='Actual Values', color='blue') 
+        # # You can also plot binary predictions if needed
+        # plt.plot(self.df1['Timestamp'], self.df1['Y_Predict_Binary'], label='Predicted Binary', color='green', linestyle=':')
+
+        # Plot actual values
+        plt.plot(self.df1['Timestamp'], self.df1['Ylabel'], label='Ylabel', color='blue') 
+        # You can also plot binary predictions if needed
+        plt.plot(self.df1['Timestamp'], self.df1['Y_Predict_Binary'], label='Ypredicted', color='green', linestyle=':')
+
+        # Add labels and title
+        plt.xlabel('Timestamp')
+        plt.ylabel('Values')
+        plt.title('Ylabel vs Ypredicted')
+        
+        # Add a legend
+        plt.legend()
+
+        # Rotate the x-axis labels for better readability
+        plt.xticks(rotation=45)
+
+        # Show the plot
+        plt.tight_layout()  # Adjust layout to avoid overlap
+        plt.show()
+
+############################################################################################################
+
+# Example usage:
+if __name__ == "__main__":
+    # Initialize the class with the Excel file path
+    excel_path='F2.csv'
+    stock_predictor = StockPricePrediction(excel_file_path=excel_path)
+    
+    # Step-by-step processing
+    stock_predictor.prepare_data()
+    stock_predictor.build_model()
+    stock_predictor.train_model(epochs=10, batch_size=32)
+    stock_predictor.evaluate_model()
+    stock_predictor.predict_and_save()
